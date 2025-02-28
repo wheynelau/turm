@@ -5,7 +5,7 @@ use crossbeam::channel::Sender;
 use regex::Regex;
 
 use crate::app::AppMessage;
-use crate::app::Job;
+use crate::job::Job;
 
 struct JobWatcher {
     app: Sender<AppMessage>,
@@ -47,7 +47,7 @@ impl JobWatcher {
             "tres-per-node",     
         ];
         let output_format = fields
-            .map(|s| s.to_owned() + ":" + output_separator)
+            .map(|s| format!("{}:{}", s, output_separator))
             .join(",");
 
         loop {
@@ -62,84 +62,17 @@ impl JobWatcher {
                 .stdout
                 .lines()
                 .map(|l| l.unwrap().trim().to_string())
-                .filter_map(|l| {
-                    let parts: Vec<_> = l.split(output_separator).collect();
-
-                    if parts.len() != fields.len() + 1 {
-                        return None;
-                    }
-
-                    let id = parts[0];
-                    let name = parts[1];
-                    let state = parts[2];
-                    let user = parts[3];
-                    let time = parts[4];
-                    let tres = match parts[17] {
-                        "N/A" => format!("{}", parts[5]),
-                        _ => format!("{},{}", parts[5],parts[17]),
-                    };
-                    let partition = parts[6];
-                    let nodelist = parts[7];
-                    let stdout = parts[8];
-                    let stderr = parts[9];
-                    let command = parts[10];
-                    let state_compact = parts[11];
-                    let reason = parts[12];
-
-                    let array_job_id = parts[13];
-                    let array_task_id = parts[14];
-                    let node_list = parts[15];
-                    let working_dir = parts[16];
-
-                    Some(Job {
-                        job_id: id.to_owned(),
-                        array_id: array_job_id.to_owned(),
-                        array_step: match array_task_id {
-                            "N/A" => None,
-                            _ => Some(array_task_id.to_owned()),
-                        },
-                        name: name.to_owned(),
-                        state: state.to_owned(),
-                        state_compact: state_compact.to_owned(),
-                        reason: if reason == "None" {
-                            None
-                        } else {
-                            Some(reason.to_owned())
-                        },
-                        user: user.to_owned(),
-                        time: time.to_owned(),
-                        tres: tres.to_owned(),
-                        partition: partition.to_owned(),
-                        nodelist: nodelist.to_owned(),
-                        command: command.to_owned(),
-                        stdout: Self::resolve_path(
-                            stdout,
-                            array_job_id,
-                            array_task_id,
-                            id,
-                            node_list,
-                            user,
-                            name,
-                            working_dir,
-                        ),
-                        stderr: Self::resolve_path(
-                            stderr,
-                            array_job_id,
-                            array_task_id,
-                            id,
-                            node_list,
-                            user,
-                            name,
-                            working_dir,
-                        ), // TODO fill all fields
+                .filter_map(|squeue_l| {
+                    Job::from_parts(squeue_l, &fields, output_separator) // TODO fill all fields
                     })
-                })
                 .collect();
             self.app.send(AppMessage::Jobs(jobs)).unwrap();
             thread::sleep(self.interval);
         }
     }
 
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     fn resolve_path(
         path: &str,
         array_master: &str,

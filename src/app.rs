@@ -3,11 +3,12 @@ use crossbeam::{
     select,
 };
 use itertools::Either;
-use std::{cmp::min, iter::once, path::PathBuf, process::Command};
+use std::{cmp::min,iter::once, process::Command};
 use std::{process::Stdio, time::Duration};
 
 use crate::file_watcher::{FileWatcherError, FileWatcherHandle};
 use crate::job_watcher::JobWatcherHandle;
+use crate::job::Job;
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::{
@@ -58,33 +59,6 @@ pub struct App {
     output_file_view: OutputFileView,
 }
 
-pub struct Job {
-    pub job_id: String,
-    pub array_id: String,
-    pub array_step: Option<String>,
-    pub name: String,
-    pub state: String,
-    pub state_compact: String,
-    pub reason: Option<String>,
-    pub user: String,
-    pub time: String,
-    pub tres: String,
-    pub partition: String,
-    pub nodelist: String,
-    pub stdout: Option<PathBuf>,
-    pub stderr: Option<PathBuf>,
-    pub command: String,
-}
-
-impl Job {
-    fn id(&self) -> String {
-        match self.array_step.as_ref() {
-            Some(array_step) => format!("{}_{}", self.array_id, array_step),
-            None => self.job_id.clone(),
-        }
-    }
-}
-
 pub enum AppMessage {
     Jobs(Vec<Job>),
     JobOutput(Result<String, FileWatcherError>),
@@ -122,8 +96,8 @@ impl App {
                 Duration::from_secs(file_refresh_rate),
             ),
             // sender,
-            receiver: receiver,
-            input_receiver: input_receiver,
+            receiver,
+            input_receiver,
             output_file_view: OutputFileView::default(),
         }
     }
@@ -165,12 +139,13 @@ impl App {
                     match dialog {
                         Dialog::ConfirmCancelJob(id) => match key.code {
                             KeyCode::Enter | KeyCode::Char('y') => {
-                                Command::new("scancel")
+                                let _ = Command::new("scancel")
                                     .arg(id)
                                     .stdout(Stdio::null())
                                     .stderr(Stdio::null())
                                     .spawn()
-                                    .expect("failed to execute scancel");
+                                    .expect("failed to execute scancel")
+                                    .wait();
                                 self.dialog = None;
                             }
                             KeyCode::Esc => {
@@ -565,51 +540,6 @@ fn chunked_string(s: &str, first_chunk_size: usize, chunk_size: usize) -> Vec<&s
     iter.chain(once(&s[last_index..])).collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_chunked_string() {
-        // Divisible
-        let input = "abcdefghij";
-        let expected = vec!["abcd", "ef", "gh", "ij"];
-        assert_eq!(chunked_string(input, 4, 2), expected);
-
-        // Not divisible
-        let input = "123456789";
-        let expected = vec!["1234", "56", "78", "9"];
-        assert_eq!(chunked_string(input, 4, 2), expected);
-
-        // Smaller
-        let input = "abc";
-        let expected = vec!["abc"];
-        assert_eq!(chunked_string(input, 4, 2), expected);
-
-        // Smaller
-        let input = "abcde";
-        let expected = vec!["abcd", "e"];
-        assert_eq!(chunked_string(input, 4, 2), expected);
-
-        // Empty
-        let input = "";
-        let expected: Vec<&str> = vec![""];
-        assert_eq!(chunked_string(input, 4, 2), expected);
-
-        let input = "123456789";
-        let expected = vec!["1234", "56789"];
-        assert_eq!(chunked_string(input, 4, 0), expected);
-
-        let input = "123456789";
-        let expected = vec!["12", "34", "56", "78", "9"];
-        assert_eq!(chunked_string(input, 0, 2), expected);
-
-        let input = "123456789";
-        let expected = vec!["123456789"];
-        assert_eq!(chunked_string(input, 0, 0), expected);
-    }
-}
-
 fn fit_text(
     s: &str,
     lines: usize,
@@ -618,7 +548,7 @@ fn fit_text(
     offset: usize,
     wrap: bool,
 ) -> Text {
-    let s = s.rsplit_once(&['\r', '\n']).map_or(s, |(p, _)| p); // skip everything after last line delimiter
+    let s = s.rsplit_once(['\r', '\n']).map_or(s, |(p, _)| p); // skip everything after last line delimiter
     let l = s.lines().flat_map(|l| l.split('\r')); // bandaid for term escape codes
     let iter = match anchor {
         ScrollAnchor::Top => Either::Left(l),
@@ -716,5 +646,50 @@ impl App {
             None => 0,
         };
         self.job_list_state.select(Some(i));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunked_string() {
+        // Divisible
+        let input = "abcdefghij";
+        let expected = vec!["abcd", "ef", "gh", "ij"];
+        assert_eq!(chunked_string(input, 4, 2), expected);
+
+        // Not divisible
+        let input = "123456789";
+        let expected = vec!["1234", "56", "78", "9"];
+        assert_eq!(chunked_string(input, 4, 2), expected);
+
+        // Smaller
+        let input = "abc";
+        let expected = vec!["abc"];
+        assert_eq!(chunked_string(input, 4, 2), expected);
+
+        // Smaller
+        let input = "abcde";
+        let expected = vec!["abcd", "e"];
+        assert_eq!(chunked_string(input, 4, 2), expected);
+
+        // Empty
+        let input = "";
+        let expected: Vec<&str> = vec![""];
+        assert_eq!(chunked_string(input, 4, 2), expected);
+
+        let input = "123456789";
+        let expected = vec!["1234", "56789"];
+        assert_eq!(chunked_string(input, 4, 0), expected);
+
+        let input = "123456789";
+        let expected = vec!["12", "34", "56", "78", "9"];
+        assert_eq!(chunked_string(input, 0, 2), expected);
+
+        let input = "123456789";
+        let expected = vec!["123456789"];
+        assert_eq!(chunked_string(input, 0, 0), expected);
     }
 }

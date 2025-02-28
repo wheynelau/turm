@@ -60,10 +60,10 @@ impl FileWatcher {
         interval: Duration,
     ) -> Self {
         FileWatcher {
-            app: app,
-            receiver: receiver,
+            app,
+            receiver,
             file_path: None,
-            interval: interval,
+            interval,
         }
     }
 
@@ -71,11 +71,8 @@ impl FileWatcher {
         let (watch_sender, watch_receiver) = unbounded();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let event = res.unwrap();
-            match event.kind {
-                notify::EventKind::Modify(ModifyKind::Data(_)) => {
-                    watch_sender.send(event.paths).unwrap();
-                }
-                _ => {}
+            if let notify::EventKind::Modify(ModifyKind::Data(_)) = event.kind {
+                watch_sender.send(event.paths).unwrap();
             };
         })
         .unwrap();
@@ -91,7 +88,7 @@ impl FileWatcher {
                             (_watch_sender, _watch_receiver) = unbounded::<()>();
 
                             if let Some(p) = &self.file_path {
-                                watcher.unwatch(p).expect(format!("Failed to unwatch {:?}", p).as_str());
+                                watcher.unwatch(p).unwrap_or_else(|_| panic!("Failed to unwatch {:?}", p));
                                 self.file_path = None;
                             }
 
@@ -100,7 +97,7 @@ impl FileWatcher {
                                 match res {
                                     Ok(_) => {
                                         self.file_path = Some(p.clone());
-                                        let i = self.interval.clone();
+                                        let i = self.interval;
                                         thread::spawn(move || FileReader::new(_content_sender, _watch_receiver, p, i).run());
                                     },
                                     Err(e) => self.app.send(AppMessage::JobOutput(Err(FileWatcherError::Watcher(e)))).unwrap()
@@ -113,7 +110,7 @@ impl FileWatcher {
                 }
                 recv(watch_receiver) -> _ => { _watch_sender.send(()).unwrap(); }
                 recv(_content_receiver) -> msg => {
-                    self.app.send(AppMessage::JobOutput(msg.unwrap().map_err(|e| FileWatcherError::File(e)))).unwrap();
+                    self.app.send(AppMessage::JobOutput(msg.unwrap().map_err(FileWatcherError::File))).unwrap();
                 }
             }
         }
@@ -128,10 +125,10 @@ impl FileReader {
         interval: Duration,
     ) -> Self {
         FileReader {
-            content_sender: content_sender,
-            receiver: receiver,
-            file_path: file_path,
-            interval: interval,
+            content_sender,
+            receiver,
+            file_path,
+            interval,
             content: "".to_string(),
             pos: 0,
         }
