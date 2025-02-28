@@ -59,7 +59,8 @@ impl Job {
         let name = field_values.get("name").unwrap().clone();
         let state = field_values.get("state").unwrap().clone();
         let state_compact = field_values.get("statecompact").unwrap().clone();
-        let reason = Some(field_values.get("reason").unwrap().clone());
+        let reason = field_values.get("reason")
+        .filter(|&value| value != "None").cloned();
         let user = field_values.get("username").unwrap().clone();
         let time = field_values.get("timeused").unwrap().clone();
         let cpu_tres = field_values.get("tres-alloc").unwrap();

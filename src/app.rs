@@ -27,6 +27,7 @@ pub enum Focus {
 
 pub enum Dialog {
     ConfirmCancelJob(String),
+    CancelJobError(String),
 }
 
 #[derive(Clone, Copy)]
@@ -139,19 +140,31 @@ impl App {
                     match dialog {
                         Dialog::ConfirmCancelJob(id) => match key.code {
                             KeyCode::Enter | KeyCode::Char('y') => {
-                                let _ = Command::new("scancel")
+                                let output = Command::new("scancel")
                                     .arg(id)
                                     .stdout(Stdio::null())
-                                    .stderr(Stdio::null())
+                                    .stderr(Stdio::piped())
                                     .spawn()
                                     .expect("failed to execute scancel")
-                                    .wait();
-                                self.dialog = None;
+                                    .wait_with_output()
+                                    .expect("failed to execute scancel");
+                                // check for error
+                                if output.status.success() {
+                                    self.dialog = None;
+                                } else {
+                                    let err_string = String::from_utf8_lossy(&output.stderr).to_string();
+                                    self.dialog = Some(Dialog::CancelJobError(
+                                        err_string
+                                       ));
+                                };
                             }
                             KeyCode::Esc => {
                                 self.dialog = None;
                             }
                             _ => {}
+                        },
+                        Dialog::CancelJobError(_error) => {
+                            self.dialog = None;
                         },
                     };
                 } else {
@@ -513,7 +526,25 @@ impl App {
                     let area = centered_lines(75, 3, f.size());
                     f.render_widget(Clear, area);
                     f.render_widget(dialog, area);
+                },
+                Dialog::CancelJobError(error) => {
+                    let dialog = Paragraph::new(Line::from(vec![
+                        Span::styled(error, Style::default().add_modifier(Modifier::BOLD)),
+                    ]))
+                    .style(Style::default().fg(Color::White))
+                    .wrap(Wrap { trim: true })
+                    .block(
+                        Block::default()
+                            .title("Error")
+                            .borders(Borders::ALL)
+                            .style(Style::default().fg(Color::Red)),
+                    );
+
+                    let area = centered_lines(75, 3, f.size());
+                    f.render_widget(Clear, area);
+                    f.render_widget(dialog, area);
                 }
+                
             }
         }
     }
