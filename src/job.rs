@@ -113,7 +113,7 @@ impl Job {
     ) -> Option<PathBuf> {
         // see https://slurm.schedmd.com/sbatch.html#SECTION_%3CB%3Efilename-pattern%3C/B%3E
         lazy_static::lazy_static! {
-            static ref RE: Regex = Regex::new(r"%(%|A|a|J|j|N|n|s|t|u|x)").unwrap();
+            static ref RE: Regex = Regex::new(r"%(\d*)(%|A|a|J|j|N|n|s|t|u|x)").unwrap();
         }
         let mut path = path.to_owned();
         let array_master = field_values.get("ArrayJobID").unwrap();
@@ -152,25 +152,31 @@ impl Job {
             .collect::<Vec<_>>() // TODO: this is stupid, there has to be a better way to reverse the captures...
             .iter()
             .rev()
-        {
-            let m = cap.get(0).unwrap();
-            let replacement = match m.as_str() {
-                "%%" => "%",
-                "%A" => array_master,
-                "%a" => array_id,
-                "%J" => id,
-                "%j" => id,
-                "%N" => host.split(',').next().unwrap_or(host),
-                "%n" => "0",
-                "%s" => "batch",
-                "%t" => "0",
-                "%u" => user,
-                "%x" => name,
-                _ => unreachable!(),
-            };
-
-            path.replace_range(m.range(), replacement);
-        }
+            {
+                let full_match = cap.get(0).unwrap(); // e.g., "%06j"
+                let width_str = cap.get(1).unwrap().as_str(); // e.g., "06"
+                let specifier = cap.get(2).unwrap().as_str(); // e.g., "j"
+            
+                let replacement = match specifier {
+                    "%" => "%".to_string(),
+                    "A" => array_master.clone(),
+                    "a" => array_id.to_string(),
+                    "J" | "j" => {
+                        let width = width_str.parse().unwrap_or(0);
+                        let numeric_id: u32 = id.parse().expect("Job ID should be numeric"); // Parse string to number
+                        format!("{:0width$}", numeric_id, width = width)
+                    }
+                    "N" => host.split(',').next().unwrap_or(host).to_string(),
+                    "n" => "0".to_string(),
+                    "s" => "batch".to_string(),
+                    "t" => "0".to_string(),
+                    "u" => user.clone(),
+                    "x" => name.clone(),
+                    _ => unreachable!(),
+                };
+            
+                path.replace_range(full_match.range(), &replacement);
+            }
 
         Some(PathBuf::from(working_dir).join(path)) // works even if `path` is absolute
     }
